@@ -1,37 +1,39 @@
 import networkx
 import sqlite3
 import pandas as pd
-from urllib.parse import urljoin, urlparse, parse_qsl
-
-netloc=["www.coop-kobe.net"]
-#netloc=["www.kobe.coop.or.jp", "ck.coop-kobe.net"]
-#netloc=["www.kobe.coop.or.jp"]
-#netloc=["ck.coop-kobe.net"]
-#netloc=None
+from urllib.parse import urljoin, urlparse, urlunparse
 
 db = sqlite3.connect("coop.db")
 db.row_factory = sqlite3.Row
 cur = db.cursor()
 
+def target2url(t):
+	parts = [t[i] for i in ("scheme", "netloc", "path", "params", "query")]
+	return urlunparse(parts+[""])
+
 idxset = set()
 g = networkx.DiGraph()
-cur.execute("SELECT * FROM target")
-for row in cur.fetchall():
-	if netloc and urlparse(row["url"]).netloc not in netloc:
-		continue
-	g.add_node(row["idx"], url=row["url"])
+cur.execute("SELECT * FROM target WHERE internal=1")
+for row in cur:
+	g.add_node(row["idx"], url=target2url(row))
 	idxset.add(row["idx"])
 
+cur.execute("SELECT * FROM target WHERE internal=1 AND jump IS NOT NULL")
+for row in cur:
+	if row["jump"] in idxset:
+		g.add_edge(row["idx"], row["jump"])
+
 cur.execute("SELECT * FROM di")
-for row in cur.fetchall():
+for row in cur:
 	if row["src"] in idxset and row["dst"] in idxset:
 		g.add_edge(row["src"], row["dst"])
 
 pr = networkx.pagerank(g, alpha=0.9)
 
 cur.execute("SELECT * FROM target ORDER BY idx")
-u=pd.Series({ w["idx"]:w["url"] for w in cur.fetchall() })
+u=pd.Series({ w["idx"]:target2url(w) for w in cur })
 w=(pd.concat([pd.Series(pr), u], axis=1)).sort_values(by=0, ascending=False)
-w.dropna()
+x=w.dropna()
 #print(pr)
-print(w)
+print(x)
+x.to_csv("coop_rank.csv")
